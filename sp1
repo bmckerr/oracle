@@ -1,0 +1,55 @@
+CREATE OR REPLACE PROCEDURE BMCKERR.PR_CHECK_GPS_SCADA AS
+/*                                                                            */
+/* PROGRAM NAME:        PR_CHECK_GPS_SCADA                                        */
+/* AUTHOR      :        Brian McKerr                                       */
+/* DATE        :        14-Sep-2016                                          */
+/* PURPOSE     :        Check GPS Unit ramping towards target       */
+/* INPUT       :        none                                                  */
+/* OUTPUT      :        GPS_SCADA_TOPVIEW                                       */
+/* TABLES USED :        DISPATCHLOAD, REAL_TIME_DATA             */
+/* CHANGE HISTORY                                                             */
+/*             :        BM - 14/09/16    Initial Version          */
+ 
+count_interval number;
+rtd_mwgen number;
+deltaval number;
+            
+BEGIN
+  FOR c1 IN ( select duid
+        from nemdi.dispatchload
+        where duid like 'GSTONE%'
+        and initialmw > 100
+        --and (raisereg = 0 and lowerreg = 0)
+        and (raisereg > 0 and lowerreg = 0)
+        and settlementdate >= (select max(settlementdate) from nemdi.dispatchload))
+  LOOP
+                -- Get the 30 second Interval count for this DUID in the current Dispatch period
+                select count(*) into count_interval
+                from real_time_data@nem1bm
+                where duid = c1.duid
+                and trading_datetime >= (select max(settlementdate) - INTERVAL '5' MINUTE from nemdi.dispatchload where duid = c1.duid);
+                              
+                -- Get the SCADA MWGEN value for this DUID using most current SCADA
+                select mw_gen into rtd_mwgen 
+                from real_time_data@nem1bm
+                where duid = c1.duid
+                and trading_datetime >= (select max(trading_datetime) from real_time_data@nem1bm where duid = c1.duid);
+               
+                -- Now look into the DISPATCHLOAD table and calculate the delta between INITIALMW and TOTALCLEARED in
+                -- relation to the SCADA MW value
+                
+                select (rtd_mwgen - (initialmw - ((initialmw - totalcleared) * (count_interval / 10)))) into deltaval
+                from nemdi.dispatchload
+                where duid = c1.duid
+                and settlementdate >= (select max(settlementdate) from nemdi.dispatchload where duid = c1.duid);
+                                       
+                -- if abs(deltaval) > 10
+                -- then
+                -- insert into alarm table
+                -- end if
+               
+                DBMS_OUTPUT.PUT_LINE(to_char(sysdate, 'HH24:MI:SS') || c1.duid || ' Interval = ' || count_interval || ' MW Generation = ' || rtd_mwgen ||  ' Delta = ' || deltaval );
+               
+  END LOOP;
+END;
+/
